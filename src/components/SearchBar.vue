@@ -3,11 +3,11 @@
     <input
       type="text"
       v-model="localCity"
-      placeholder="Entrez une ville (ex: Bujumbura)"
-      @keyup.enter="onSearch"
+      placeholder="Enter a city (e.g. Bujumbura)"
+      @keyup.enter="handleSearch"
     />
-    <button @click="onSearch" :disabled="!localCity.trim()">
-      Rechercher
+    <button @click="handleSearch" :disabled="!localCity.trim()">
+      Search
     </button>
   </div>
 </template>
@@ -15,14 +15,14 @@
 <script>
 export default {
   name: 'SearchBar',
-  // On reçoit une prop initiale (optionnelle) depuis le parent
+  // Receives an optional initial city from the parent
   props: {
     initialCity: {
       type: String,
       default: ''
     }
   },
-  // On émet un événement vers le parent
+  // Emits a search event to the parent
   emits: ['search'],
   data() {
     return {
@@ -30,7 +30,7 @@ export default {
     }
   },
   methods: {
-    onSearch() {
+    handleSearch() {
       const city = this.localCity.trim()
       if (city) this.$emit('search', city)
     }

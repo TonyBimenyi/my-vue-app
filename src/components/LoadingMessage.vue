@@ -11,7 +11,7 @@ export default {
   props: {
     message: {
       type: String,
-      default: 'Chargement des données météo...'
+      default: 'Loading weather data...'
     }
   }
 }

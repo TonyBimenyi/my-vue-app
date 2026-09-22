@@ -9,11 +9,11 @@
 
     <div class="details">
       <div class="detail">
-        <span class="label">Humidité</span>
+        <span class="label">Humidity</span>
         <span class="value">{{ weather.humidity }} %</span>
       </div>
       <div class="detail">
-        <span class="label">Vent</span>
+        <span class="label">Wind</span>
         <span class="value">{{ weather.windSpeed }} km/h</span>
       </div>
     </div>
@@ -30,8 +30,8 @@ export default {
     }
   },
   computed: {
+    // Builds the weather icon URL from the icon code
     iconUrl() {
-      // weather.icon contient le code Open-Meteo (ex: "01d")
       return `https://openweathermap.org/img/wn/${this.weather.icon}@2x.png`
     }
   }

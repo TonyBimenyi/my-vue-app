@@ -2,34 +2,34 @@
   <div class="app">
     <header>
       <h1>🌤️ Weather App</h1>
-      <p class="subtitle">Recherchez la météo d'une ville</p>
+      <p class="subtitle">Search for the weather of any city</p>
     </header>
 
     <main class="container">
-      <SearchBar :initial-city="city" @search="onSearch" />
+      <SearchBar :initial-city="city" @search="handleSearch" />
 
-      <!-- État : chargement -->
+      <!-- State: loading -->
       <LoadingMessage v-if="loading" />
 
-      <!-- État : erreur -->
+      <!-- State: error -->
       <div v-else-if="error" class="error">
         <p>{{ error }}</p>
       </div>
 
-      <!-- État : succès -->
+      <!-- State: success -->
       <WeatherCard v-else-if="weather" :weather="weather" />
 
-      <!-- État : initial (aucune recherche) -->
+      <!-- State: initial (no search yet) -->
       <div v-else class="empty">
-        <p>Entrez le nom d'une ville pour commencer.</p>
-        <p class="hint">Essayez : Bujumbura, Tokyo, Nairobi, Shanghai, Paris</p>
+        <p>Enter a city name to get started.</p>
+        <p class="hint">Try: Bujumbura, Tokyo, Nairobi, Shanghai, Paris</p>
       </div>
 
-      <!-- v-show : historique (toujours dans le DOM) -->
+      <!-- v-show: search history (kept in the DOM) -->
       <div v-show="history.length > 0" class="history">
-        <h3>Recherches récentes</h3>
+        <h3>Recent searches</h3>
         <ul>
-          <li v-for="(item, index) in history" :key="index" @click="onSearch(item)">
+          <li v-for="(item, index) in history" :key="index" @click="handleSearch(item)">
             {{ item }}
           </li>
         </ul>
@@ -43,7 +43,7 @@ import SearchBar from './components/SearchBar.vue'
 import WeatherCard from './components/WeatherCard.vue'
 import LoadingMessage from './components/LoadingMessage.vue'
 
-// Table de correspondance code WMO (Open-Meteo) -> code icône OpenWeatherMap
+// WMO weather code (Open-Meteo) -> OpenWeatherMap icon code
 const WMO_TO_ICON = {
   0: '01d', 1: '02d', 2: '03d', 3: '04d',
   45: '50d', 48: '50d',
@@ -55,15 +55,16 @@ const WMO_TO_ICON = {
   95: '11d', 96: '11d', 99: '11d'
 }
 
+// WMO weather code -> human readable condition
 const WMO_TO_TEXT = {
-  0: 'Ciel dégagé', 1: 'Principalement dégagé', 2: 'Partiellement nuageux', 3: 'Couvert',
-  45: 'Brouillard', 48: 'Brouillard givrant',
-  51: 'Bruine légère', 53: 'Bruine modérée', 55: 'Bruine dense',
-  61: 'Pluie légère', 63: 'Pluie modérée', 65: 'Pluie forte',
-  71: 'Neige légère', 73: 'Neige modérée', 75: 'Neige forte', 77: 'Grains de neige',
-  80: 'Averses légères', 81: 'Averses modérées', 82: 'Averses violentes',
-  85: 'Averses de neige', 86: 'Fortes averses de neige',
-  95: 'Orage', 96: 'Orage avec grêle', 99: 'Orage violent avec grêle'
+  0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+  45: 'Fog', 48: 'Depositing rime fog',
+  51: 'Light drizzle', 53: 'Moderate drizzle', 55: 'Dense drizzle',
+  61: 'Slight rain', 63: 'Moderate rain', 65: 'Heavy rain',
+  71: 'Slight snow', 73: 'Moderate snow', 75: 'Heavy snow', 77: 'Snow grains',
+  80: 'Slight showers', 81: 'Moderate showers', 82: 'Violent showers',
+  85: 'Snow showers', 86: 'Heavy snow showers',
+  95: 'Thunderstorm', 96: 'Thunderstorm with hail', 99: 'Severe thunderstorm with hail'
 }
 
 export default {
@@ -75,61 +76,61 @@ export default {
       weather: null,
       loading: false,
       error: '',
-      history: []   // Bonus : historique de recherche
+      history: []   // Bonus: search history
     }
   },
   methods: {
-    async onSearch(cityName) {
-      // Réinitialisation des états
+    async handleSearch(cityName) {
+      // Reset states before each new search
       this.loading = true
       this.error = ''
       this.weather = null
       this.city = cityName
 
       try {
-        // 1. Géocodage : nom de ville -> coordonnées
-        const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=1&language=fr&format=json`
-        const geoRes = await fetch(geoUrl)
-        if (!geoRes.ok) throw new Error('NETWORK')
+        // 1. Geocoding: city name -> coordinates
+        const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityName)}&count=1&language=en&format=json`
+        const geoResponse = await fetch(geoUrl)
+        if (!geoResponse.ok) throw new Error('NETWORK_ERROR')
 
-        const geoData = await geoRes.json()
+        const geoData = await geoResponse.json()
         if (!geoData.results || geoData.results.length === 0) {
-          throw new Error('NOT_FOUND')
+          throw new Error('CITY_NOT_FOUND')
         }
 
         const { latitude, longitude, name, country } = geoData.results[0]
 
-        // 2. Météo actuelle via coordonnées
+        // 2. Current weather using the coordinates
         const weatherUrl =
           `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
           `&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code` +
           `&timezone=auto`
 
-        const weatherRes = await fetch(weatherUrl)
-        if (!weatherRes.ok) throw new Error('NETWORK')
+        const weatherResponse = await fetch(weatherUrl)
+        if (!weatherResponse.ok) throw new Error('NETWORK_ERROR')
 
-        const weatherData = await weatherRes.json()
-        const c = weatherData.current
+        const weatherData = await weatherResponse.json()
+        const current = weatherData.current
 
         this.weather = {
           city: `${name}, ${country}`,
-          temperature: Math.round(c.temperature_2m),
-          humidity: c.relative_humidity_2m,
-          windSpeed: Math.round(c.wind_speed_10m),
-          condition: WMO_TO_TEXT[c.weather_code] || 'Inconnu',
-          icon: WMO_TO_ICON[c.weather_code] || '01d'
+          temperature: Math.round(current.temperature_2m),
+          humidity: current.relative_humidity_2m,
+          windSpeed: Math.round(current.wind_speed_10m),
+          condition: WMO_TO_TEXT[current.weather_code] || 'Unknown',
+          icon: WMO_TO_ICON[current.weather_code] || '01d'
         }
 
-        // Ajout à l'historique (max 5, sans doublon)
+        // Add to history (max 5, no duplicates)
         if (!this.history.includes(name)) {
           this.history.unshift(name)
           if (this.history.length > 5) this.history.pop()
         }
       } catch (err) {
-        if (err.message === 'NOT_FOUND') {
-          this.error = `Ville "${cityName}" introuvable. Vérifiez l'orthographe.`
+        if (err.message === 'CITY_NOT_FOUND') {
+          this.error = `City "${cityName}" not found. Please check the spelling.`
         } else {
-          this.error = 'Erreur réseau. Vérifiez votre connexion et réessayez.'
+          this.error = 'Network error. Please check your connection and try again.'
         }
       } finally {
         this.loading = false
