@@ -1,0 +1,654 @@
+================================================================
+VUE.JS STUDENT MANAGEMENT APP — FULL EXPLANATION
+================================================================
+
+Table of Contents
+-----------------
+1. What this app does
+2. Project folder structure
+3. Key concepts you need to understand
+4. How every piece fits together (data flow)
+5. Step-by-step: what happens when you visit a page
+6. How the API connection works (Vite proxy trick to avoid CORS)
+7. How to switch between ngrok / localhost backends
+8. Each file explained, line-by-line intent
+9. How to add new features (e.g. Courses page)
+10. Common errors & how to fix them
+11. Running & building the app
+
+================================================================
+1. WHAT THIS APP DOES
+================================================================
+This is a Single Page Application (SPA) built with Vue 3 and Vite
+that lets you manage university students against a REST API.
+
+It has 5 main pages (routes):
+  /                 Home page — welcome + links
+  /students         List all students (cards with name / course / age)
+  /students/add     Form to CREATE a new student
+  /students/edit/:id Form to UPDATE an existing student
+  /students/:id     Detail view for one student
+
+Every "read / write" operation talks to a backend API through:
+  GET    /api/students/        list
+  GET    /api/students/<id>/   one student
+  POST   /api/students/        create
+  PUT    /api/students/<id>/   update
+  DELETE /api/students/<id>/   delete
+  GET    /api/courses/         course list (for the dropdown)
+
+The backend is assumed to be Django REST Framework (DRF) but can
+be any REST API.  The frontend only cares that the endpoints return
+JSON in a reasonable shape.
+
+
+================================================================
+2. PROJECT FOLDER STRUCTURE
+================================================================
+my-vue-app/
+│
+├── index.html                  <-- Very small. Just loads Vue.
+│                                 Vite injects <script type=module>
+│                                 into it automatically.
+│
+├── vite.config.js              <-- Vite + dev server + proxy config.
+│                                 This is what forwards /api/* calls
+│                                 to your real backend to avoid CORS.
+│
+├── package.json                <-- Dependencies + scripts
+│                                 (npm run dev, build, preview).
+│
+└── src/
+    ├── main.js                 <-- Entry point. Creates the Vue app
+    │                             instance, attaches Vue Router,
+    │                             mounts <App /> into index.html.
+    │
+    ├── App.vue                 <-- ROOT component. Wraps EVERY page.
+    │                             Renders <Navbar /> above <RouterView />
+    │                             so the navbar stays visible always.
+    │
+    ├── router/
+    │   └── index.js            <-- Maps URL paths --> Vue components.
+    │                                 /         -> HomeView
+    │                                 /students -> StudentsView
+    │                                 /students/add -> StudentForm
+    │                                 /students/edit/:id -> StudentForm
+    │                                 /students/:id -> StudentsDetailsView
+    │
+    ├── services/
+    │   └── api.js              <-- SHARED axios instance.
+    │                                 baseURL: "/api"
+    │                                 timeout: 30000
+    │                                 default headers
+    │                             Every component imports THIS
+    │                             instead of importing axios raw.
+    │
+    ├── components/             <-- Reusable UI blocks (NOT pages)
+    │   ├── Navbar.vue          Top navigation bar
+    │   └── StudentCard.vue     Presentational card (takes props)
+    │
+    └── views/                  <-- Page-level components
+        ├── HomeView.vue               /
+        ├── StudentsView.vue           /students        (list)
+        ├── StudentForm.vue            /students/add    &  /edit/:id
+        └── StudentsDetailsView.vue    /students/:id    (one student)
+
+
+================================================================
+3. KEY VUE CONCEPTS USED IN THIS APP
+================================================================
+
+Single-File Components (.vue files)
+-----------------------------------
+Every .vue file has 3 optional blocks, all in one file:
+
+  <template>  -- HTML that renders into the DOM.
+                Uses Vue directives like v-if, v-for, v-model,
+                mustache interpolation {{ thing }}, RouterLink, etc.
+
+  <script>    -- JavaScript / logic.
+                default export object is the component definition
+                (data, methods, computed, mounted, etc.).
+
+  <style>     -- CSS. With `scoped` attribute, the styles ONLY apply
+                to the elements in THIS component's template
+                (Vue rewrites class names at compile time).
+
+Reactive data (data())
+----------------------
+Anything you return from the `data()` function becomes "reactive":
+  this.students = [...]
+...will AUTOMATICALLY re-render the <template> everywhere students
+is referenced.  No manual DOM updates ever.
+
+Methods vs Computed
+-------------------
+methods  — functions you CALL explicitly (getStudents(), deleteStudent(id))
+computed — functions Vue CALLS automatically when their inputs change.
+           Their return value is cached. Great for derived state
+           (e.g. `courseNameById` Map that rebuilds when courses[] changes).
+
+Lifecycle hooks
+---------------
+mounted() — runs ONCE, after the component's template is rendered
+            into the real DOM for the first time.  Ideal for fetching
+            initial data (getStudents()).
+
+watch: { x() } — runs every time reactive property `x` changes.
+            Used in StudentsDetailsView to re-fetch when navigating
+            from /students/1 to /students/2 (Vue reuses the component).
+
+Props
+-----
+Data a parent component passes DOWN to a child.
+Example: StudentCard.vue has props: { name, course, age }.
+Parent uses:  <StudentCard name="Alice" course="Django" :age="22" />
+
+Vue Router
+----------
+<RouterLink to="/students">   SPA link — no full page reload.
+                              Becomes an <a> in the DOM.
+
+<RouterView />                Placeholder that swaps to whichever
+                              component matches the current URL.
+
+this.$router.push("/foo")     Programmatic navigation (from JS).
+this.$route.params.id         Read :id from the URL.
+
+Vite dev proxy (to avoid CORS)
+------------------------------
+CORS is a BROWSER security feature.  If your frontend (localhost:5173)
+directly fetches https://other-server:8000/api, the browser blocks it.
+
+THE TRICK: make the frontend fetch from ITS OWN origin:
+  GET http://localhost:5173/api/students/
+
+Vite (the dev server that serves your frontend) is configured to
+"forward anything starting with /api to the real backend":
+
+  vite.config.js -> server.proxy['/api'] = { target: 'http://127.0.0.1:8000' }
+
+Because the forwarding is SERVER-TO-SERVER, CORS doesn't apply.
+Browsers only enforce CORS for browser-initiated cross-origin calls.
+
+
+================================================================
+4. DATA FLOW — HIGHEST-LEVEL PICTURE
+================================================================
+                     ┌──────────────────────────────┐
+                     │     User clicks /students    │
+                     └────────────┬─────────────────┘
+                                  ▼
+                     ┌──────────────────────────────┐
+                     │  Vue Router finds matching   │
+                     │  route: /students ->         │
+                     │  StudentsView.vue component  │
+                     └────────────┬─────────────────┘
+                                  ▼
+                     ┌──────────────────────────────┐
+                     │  component.mounted() runs    │
+                     │  → this.getCourses()         │
+                     │  → this.getStudents()        │
+                     └────────────┬─────────────────┘
+                                  ▼
+                     ┌──────────────────────────────┐
+                     │  api.get("/students/")       │
+                     │  axios sends:                │
+                     │   GET http://localhost:5173/  │
+                     │       api/students/          │
+                     └────────────┬─────────────────┘
+                                  ▼
+                     ┌──────────────────────────────┐
+                     │  VITE DEV PROXY intercepts   │
+                     │  Forwards to:                │
+                     │   GET http://127.0.0.1:8000/  │
+                     │       api/students/          │
+                     │  (adds Accept: application/  │
+                     │   json header too)           │
+                     └────────────┬─────────────────┘
+                                  ▼
+                     ┌──────────────────────────────┐
+                     │  Django (DRF) replies with   │
+                     │  JSON array of 200 students  │
+                     └────────────┬─────────────────┘
+                                  ▼
+                     ┌──────────────────────────────┐
+                     │  .then(response):            │
+                     │  this.students = response.data│
+                     └────────────┬─────────────────┘
+                                  ▼
+                     ┌──────────────────────────────┐
+                     │  Vue detects `students` was  │
+                     │  changed and RE-RENDERS the  │
+                     │  template.  <div v-for loop> │
+                     │  now generates 200 cards.    │
+                     └──────────────────────────────┘
+
+
+================================================================
+5. STEP-BY-STEP: /students/page load (what code runs when)
+================================================================
+
+5.1  User navigates to http://localhost:5173/students
+5.2  Vue Router matches path "/students" -> { component: StudentsView }
+5.3  RouterView (in App.vue) unmounts old page, mounts StudentsView
+5.4  Vue builds the template DOM (shows "Loading students…" because
+     loading=true initially, students=[])
+5.5  mounted() hook fires -> calls getStudents() + getCourses()
+5.6  Both api.get() promises fire in parallel.
+5.7  (In parallel) Vite forwards each to the Django backend.
+5.8  When the students promise resolves: this.students = response.data
+     → template re-renders: the  <div v-for="student in students">
+     loop produces a card per student.
+     Also finally() sets loading=false → "Loading" disappears.
+5.9  When courses promise resolves → courseNameById computed rebuilds
+     → Any "Course: 2" in cards that didn't have a backend-provided
+     course_name now resolves to "JavaScript" via the lookup Map.
+5.10 User clicks "Delete" on a card.
+     -> deleteStudent(id) fires -> window.confirm -> api.delete()
+     -> .then: this.students = students.filter(s => s.id !== id)
+     -> Vue re-renders, card is gone from DOM (no need to re-fetch
+     the whole list for one deletion).
+
+
+================================================================
+6. HOW THE API CONNECTION WORKS (the proxy trick)
+================================================================
+Goal: avoid CORS in development.  How:
+
+  User's browser sees:  http://localhost:5173/api/students
+                         ^^^^^^^^^^^^^^^^^^^^ same origin as the app
+  Browser happily allows the request (same-origin = no CORS check).
+
+  Vite (running on localhost:5173) sees the /api prefix.  It says:
+    "Oh — this is a proxied path.  target = http://127.0.0.1:8000"
+  So Vite makes its OWN http request (server→server, not browser→server):
+    GET http://127.0.0.1:8000/api/students
+    plus headers from proxy.on('proxyReq') hook.
+
+  Django replies → Vite forwards the response back to the browser as
+  if Vite itself had generated it.
+
+Result:
+  • Browser thinks it talked only to localhost:5173 → no CORS error.
+  • Browser never even knows Django exists on another port.
+
+Why you can't just use a full baseURL in axios:
+  If baseURL were "http://127.0.0.1:8000/api", the browser would
+  make a cross-origin request.  Then Django must send CORS headers
+  (django-cors-headers with CORS_ALLOWED_ORIGINS set).  The proxy
+  lets you skip that during development.
+
+Why changeOrigin: true matters:
+  Without it, the proxied request carries the original Host header
+  ("Host: localhost:5173").  Django's ALLOWED_HOSTS check would
+  reject it because localhost:5173 isn't 127.0.0.1:8000.
+  changeOrigin rewrites Host: to 127.0.0.1:8000.
+
+
+================================================================
+7. SWITCHING BACKENDS (localhost <-> ngrok)
+================================================================
+Everything is driven from TWO files — you never have to hunt for
+hardcoded URLs scattered around.
+
+TO LOCALHOST (e.g. Django on http://127.0.0.1:8000):
+  1. Start your backend locally.
+  2. In vite.config.js -> server.proxy['/api'].target set:
+        target: 'http://127.0.0.1:8000'
+  3. Restart Vite (Ctrl+C + npm run dev).
+  4. api.js needs no changes (baseURL stays "/api").
+
+TO NGROK SHARED TUNNEL (temporary):
+  1. Start ngrok on the backend machine:
+        ngrok http 8000
+     → gives you something like https://foo.ngrok-free.dev
+  2. In vite.config.js -> proxy target:
+        target: 'https://foo.ngrok-free.dev'
+     Also add to the proxyReq hook:
+        proxyReq.setHeader('ngrok-skip-browser-warning', 'true')
+        proxyReq.setHeader('User-Agent', 'Vite-Dev-Proxy')
+     (prevents ERR_NGROK_6024 interstitial page from breaking
+     JSON parsing on API calls).
+  3. Restart Vite.
+  4. In api.js you can optionally re-add:
+        "ngrok-skip-browser-warning": "true"
+     (belt + suspenders — the proxyReq hook covers it, but this
+     won't hurt if Vite is ever bypassed later in production).
+
+IN PRODUCTION:
+  When you build (npm run build), Vite's proxy GOES AWAY — it's a
+  dev-only feature.  Your production deployment must:
+  A) Serve the frontend and API from the SAME origin (same domain,
+     or use a reverse proxy like nginx that maps /api → backend
+     and everything else → the static frontend build).
+  OR
+  B) Put baseURL in api.js to the full https://api.you.com/api AND
+     make the backend send proper CORS headers.
+
+
+================================================================
+8. EACH FILE EXPLAINED (what problem each solves)
+================================================================
+
+--- 8.1 src/main.js  ---
+Entry point.  Only 4 lines of actual app logic:
+  createApp(App)
+    .use(router)         -- attach Vue Router
+    .mount('#app')       -- mount App.vue into index.html's
+                            <div id="app"></div>
+Think of it as the "starter motor" of the Vue car.
+
+--- 8.2 src/App.vue  ---
+The non-page chrome that's present on EVERY route:
+  <Navbar />        always on top
+  <RouterView />    the current page (HomeView / StudentsView / …)
+Also contains the ONLY non-scoped <style> block — sets a nicer
+default font + box-sizing:border-box globally.
+Added `:key="$route.fullPath"` on RouterView to force a full remount
+on every URL change.  Good for beginners because lifecycle hooks
+run predictably.  Advanced users can remove it + rely on watchers.
+
+--- 8.3 src/router/index.js  ---
+The "map of the app".  An array of { path, component } objects.
+  / → HomeView
+  /students → StudentsView
+  /students/add → StudentForm (create mode)
+  /students/edit/:id → StudentForm (edit mode)
+  /students/:id → StudentsDetailsView
+
+⚠ ORDER MATTERS ⚠
+"/students/edit/:id"  comes  BEFORE  "/students/:id".
+Why?  Vue Router matches top→down.  If "/students/:id" were first,
+the URL /students/add would match the catch-all :id = "add" and
+load the wrong component (DetailsView with id="add").
+The "more specific" static segment always goes first.
+
+createWebHistory() gives clean URLs without a "#".  It requires
+your production server to be configured so that every unknown path
+falls back to index.html (otherwise Refresh on /students returns
+a 404).  Vite dev server auto-handles this.
+
+--- 8.4 src/services/api.js  ---
+Centralized axios instance.  Benefits of centralizing:
+  • Config (baseURL, headers, timeout) lives in ONE place.
+    Want to add auth tokens later?  Add an interceptor HERE
+    and every API call in the app inherits it automatically.
+  • One import statement everywhere:
+      import api from "@/services/api"
+    instead of repeating axios.create({...}) per file.
+  • Bonus: axios' baseURL is "/api" so every call like
+      api.get("/students/")
+    becomes GET /api/students/.  You never hardcode the full URL
+    in components, so swapping backends only touches this file +
+    vite.config.js.
+
+Auth interceptor template (commented out) shows how to attach a
+JWT token from localStorage to every outgoing request, and how
+to globally catch 401 Unauthorized to kick the user back to /login.
+Uncomment and adapt when you build a login page.
+
+--- 8.5 src/components/Navbar.vue  ---
+Pure navigation + presentational.  No state, no API calls.
+Each RouterLink becomes an <a>.
+Vue Router automatically adds the CSS class `router-link-active`
+to the RouterLink whose URL matches the current page.  The
+scoped styles target `.router-link-active` to make the active tab
+red + bold + underlined.  This is 0 lines of your code.
+
+"Students" / "Add Student" / "Courses" are hardcoded because they
+are static links.  For dynamic menus you'd v-for a list.
+
+--- 8.6 src/components/StudentCard.vue  ---
+The classic "dumb / presentational" component.  It knows nothing
+about HTTP, routes, the API — all of its data comes from props.
+  props: { name, course, age }
+
+This is important separation of concerns:
+  Parents FETCH data, Children RENDER data.
+That way StudentCard is super reusable — any parent can do:
+  <StudentCard :name="x" :course="y" :age="z" />
+
+--- 8.7 src/views/HomeView.vue  ---
+Tiny welcome page.  Demonstrates TWO ways to navigate:
+  Declarative: <RouterLink to="/students">Browse students</RouterLink>
+  Imperative:  this.$router.push("/students")   (inside a method)
+Use the first when you just need a clickable link.  Use the second
+when navigation is conditional (e.g. "after form save go to list").
+
+--- 8.8 src/views/StudentsView.vue  ---
+The "list" page.  The most important component.
+
+data():
+  students: []   ← the list from the API
+  loading: false ← true while any API call in flight
+  error: ""      ← user-facing error banner
+  courses: []    ← fetched separately, for ID→name lookup
+
+computed:
+  courseNameById: Map<courseId, courseName>
+  Built from courses[] once, then cached.  O(1) lookups per card.
+
+getStudents() pattern (the "three-promise-handlers" pattern):
+  .then()  → success: this.students = data
+  .catch() → error: this.error = "Failed…", full console dump
+             differentiates error.response (backend replied with
+             bad status) vs error.request (no reply) vs other.
+  .finally() → loading = false, ALWAYS runs (even on catch)
+
+WHY we use .finally() not put loading=false at end of .then():
+  If the API call fails, .then() never runs → loading would be
+  stuck true forever.  finally() always runs.
+
+deleteStudent() pattern:
+  window.confirm()  -- browser native confirm
+  api.delete(`/students/${id}/`)
+  on success:
+    this.students = this.students.filter(s => s.id !== id)
+  This is an OPTIMISTIC LOCAL UPDATE — we remove it from the
+  DOM immediately without re-fetching the whole list.  That's a
+  small UX win (no loading flash).  But if you prefer strict
+  server sync, uncomment this.getStudents() in the .then block.
+
+--- 8.9 src/views/StudentForm.vue  ---
+Same component handles TWO routes:
+  /students/add        → ADD mode (form is empty; on submit → POST)
+  /students/edit/:id   → EDIT mode (form is pre-filled; on submit → PUT)
+
+Mode detection in mounted():
+  if (this.$route.params.id) → isEditing = true → getStudent()
+Pre-fetching lets the form set existing values into inputs.
+
+getCourses() runs in both modes to populate the course <select>.
+Before this, courses were hardcoded (value 1=Django, 2=JS).  Now
+they come from the backend so the dropdown always matches the
+actual Course table rows.
+
+validateForm() = client-side validation.
+  Fast UX feedback without a network round-trip.
+  Sets per-field errors: { name: "Please enter a name" }
+  Returns true if valid, false otherwise.
+⚠️ Client-side validation is ONLY a convenience for users.
+   Real validation MUST happen on the backend in your serializer
+   or model clean() method.  Never trust the client.
+
+submitForm():
+  validateForm() → bail out if invalid.
+  build studentData with Number() coercion.
+    WHY coerce?  v-model on <input type="number"> STILL gives you a
+    STRING in some browsers / Vue versions.  Backends expect ints.
+  if (isEditing) updateStudent()  → PUT
+              else addStudent()   → POST
+
+handleSaveError() is a clever piece:
+  Backends like DRF return validation errors as:
+    { status: 400, data: { name: ["This field is required"] } }
+  This function maps each field key in the error back to the
+  matching form input, so the backend's "Name required" shows up
+  directly under the Name field instead of a generic alert.
+
+--- 8.10 src/views/StudentsDetailsView.vue  ---
+Route param `:id` → this.$route.params.id → api.get(`/students/:id/`).
+The template renders a clean <dl> definition list.
+
+Watch out for: Vue Router reusing components.  If user navigates
+/students/1 → /students/2, Vue doesn't destroy + re-create the
+component — it's the same instance.  So mounted() only runs once
+for the first id.  That's why we have:
+  watch: { studentId() { this.loadStudent() } }
+The watcher catches the route change within the same component.
+(App.vue's :key="$route.fullPath" mostly prevents this scenario
+for simplicity, but the watcher still acts as a safety net.)
+
+Also: loadStudent() gracefully handles a 404 response — the
+error banner says "Student not found (404)."
+Delete + Edit buttons are also here (quick actions from details).
+
+--- 8.11 vite.config.js  ---
+3 plugins:
+  vue()              → lets Vite compile .vue SFCs
+  vueDevTools()      → adds Chrome/Firefox Vue devtools integration
+  resolve.alias @ → src   → @/services/api resolves to
+                                 src/services/api.js everywhere
+
+server.proxy['/api']:
+  target              → where to forward
+  changeOrigin        → rewrite Host header (MUST-HAVE for Django)
+  secure              → relax Node TLS checks for https targets
+  ws                  → proxy websockets too
+  timeout/proxyTimeout→ 30s wait before 504
+  followRedirects     → follow 301/302
+  configure():
+    proxyReq  → mutate request before forwarding
+    proxyRes  → log into Vite terminal every call + status
+    error     → log proxy failures (backend down = good error here)
+
+
+================================================================
+9. HOW TO ADD A FEATURE (example: Courses CRUD page)
+================================================================
+Let's say you want a Courses list + add/edit/delete.
+
+Step 1 — Backend
+  • Add a CourseViewSet to Django (GET/POST/PUT/DELETE on
+    /api/courses/<id>/) if you don't already have one.
+
+Step 2 — Add the pages:
+  • Copy StudentsView.vue → CoursesView.vue
+    • api.get("/courses/")
+    • v-for loops over courses[]
+  • Copy StudentForm.vue → CourseForm.vue
+    • fields: name, code, description, ...
+  • Copy StudentsDetailsView.vue → CourseDetailsView.vue
+
+Step 3 — Router (src/router/index.js):
+  Import the new components at top of router/index.js.
+  Add routes:
+    { path: "/courses",                      component: CoursesView },
+    { path: "/courses/add",                  component: CourseForm },
+    { path: "/courses/edit/:id",             component: CourseForm },
+    { path: "/courses/:id",                  component: CourseDetailsView },
+  IMPORTANT: put the /courses/:id route LAST (after /courses/add
+  and /courses/edit/:id) for the same reason as the students routes.
+
+Step 4 — Make the Navbar "Courses" link work:
+  It already points to /courses, so just refreshing should do it
+  once the route is registered.
+
+Done.  The exact same patterns you see in the Students code apply
+to any resource.  Copy/paste + swap "student" → "course" + rename
+fields is the fastest way to get a new CRUD page running.
+
+
+================================================================
+10. COMMON ERRORS AND HOW TO FIX THEM
+================================================================
+
+A) CORS error: "Access-Control-Allow-Origin" missing
+   Cause: axios directly hitting a different origin (not using /api)
+   Fix: • baseURL in api.js MUST be "/api" (not http://other:port)
+        • vite.config.js proxy must be set
+        • restart Vite after editing vite.config.js
+
+B) 502 Bad Gateway from Vite proxy
+   Cause: proxy target is unreachable (ngrok died, Django not running)
+   Fix: • start Django / restart ngrok
+        • check Vite terminal for `[proxy error]` lines
+
+C) ERR_NGROK_6024 in XHR / JSON parse fails on HTML
+   Cause: ngrok shows its "do you trust this" interstitial page
+          instead of JSON.
+   Fix: add `ngrok-skip-browser-warning: true` header in api.js
+        defaults AND Vite proxyReq hook.
+
+D) 400 Bad Request "CSRF verification failed" (Django)
+   Cause: Django requires CSRF tokens for unsafe methods.
+          For a pure REST API you should disable session auth on
+          the viewset and use Token/JWT auth instead.
+   Fix: In DRF, set `authentication_classes = [TokenAuthentication]`
+        and `permission_classes = [...]` on your ViewSets.  DO NOT
+        rely on Django session auth for an SPA API.
+        Quick (but unsafe for prod!) test fix: `@csrf_exempt`.
+
+E) Student list shows "Course: 2" instead of "JavaScript"
+   Three reasons:
+   1. /api/courses/ returned 404 → no lookup data.
+      Fix: add the Course route on the backend.
+   2. getCourses() failed silently → console shows a warning.
+   3. backend returned integer course_id but no name.  The lookup
+      IS working, it just has nothing to map.  Go to step 1.
+
+F) Refreshing a deep URL (e.g. /students/42) returns 404
+   Cause: your webserver doesn't have the SPA fallback.
+   Fix in development: you shouldn't get this — Vite handles it.
+   Fix in production: configure nginx/Apache to serve index.html
+   for every non-API path (look up "history mode fallback" in the
+   Vue Router docs).
+
+G) Course dropdown is empty
+   Cause: GET /api/courses/ returned [] or 404.
+   Fix: open browser DevTools Network tab, look for /api/courses/,
+   check its status + response.  If 404, add the route on the
+   backend.  If 200 but [] → no Course objects exist, create one
+   via Django admin.
+
+H) Navbar "Courses" link shows blank page
+   Cause: no route defined yet for /courses.  RouterView has no
+   matching component so it renders nothing.
+   Fix: add { path: "/courses", component: CoursesView } to
+   router/index.js (see section 9).
+
+
+================================================================
+11. RUNNING & BUILDING THE APP
+================================================================
+
+First time (after cloning / downloading):
+  cd my-vue-app
+  npm install            # downloads Vue, Vite, axios, etc. into node_modules/
+
+Everyday development:
+  npm run dev            # starts Vite dev server on localhost:5173
+  (keep this terminal open)
+  Open http://localhost:5173 in your browser.
+  Edit .vue files → Vite auto-reloads the page instantly (HMR).
+
+Production build:
+  npm run build          # compiles everything into dist/ folder
+                         (index.html + CSS + minified JS bundles)
+
+Preview production build locally (quick check):
+  npm run preview        # serves the dist/ folder
+
+Deploying:
+  Upload the dist/ folder to any static hosting (Netlify, Vercel,
+  S3 + CloudFront, nginx static folder, etc.) AND make sure your
+  API is reachable either:
+    • from the same origin (recommended — no CORS)
+    • or with proper CORS headers + api.js baseURL set to the full
+      API URL (section 7).
+
+
+================================================================
+END OF FILE
+================================================================
